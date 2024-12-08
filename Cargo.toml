@@ -1,9 +1,10 @@
 [package]
 name = "pstruct"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["Infamous <ehuff007@gmail.com>"]
 license = "MIT OR Apache-2.0"
+readme = "README.md"
 description = "A Rust procedural macro for generating pointer struct implementations with field offset access."
 repository = "https://github.com/ehuff700/pstruct"
 categories = [
