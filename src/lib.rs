@@ -12,62 +12,6 @@
 //! - Pointer reinterpretation capabilities
 //! - Safe and ergonomic field access
 //!
-//! ## Usage
-//!
-//! Add this to your `Cargo.toml`:
-//!
-//! ```toml
-//! [dependencies]
-//! pstruct = "0.1.0"
-//! ```
-//!
-//! ## Example
-//!
-//! ```rust
-//! use pstruct::p_struct;
-//!
-//! // Define a byte array to simulate struct data
-//! let byte_array: &[u8] = &[
-//!     69,                     // `field_b` (offset 0)
-//!     255, 255, 255, 255,     // `field_a` (offset 1)
-//!     10, 20, 30, 40, 50, 60, 70, 80, 90, 100, // `field_d` (offset 5)
-//!     40,                     // `field_c` (offset 0xF)
-//! ];
-//!
-//! // Define a pointer struct using the macro
-//! p_struct! {
-//!     pub struct Example {
-//!         #[offset(0x1)]
-//!         field_a: u32,
-//!         #[offset(0x0)]
-//!         field_b: u8,
-//!         #[offset(0xF, reinterpret)]
-//!         field_c: *const u8,
-//!         #[offset(0x5, array(10))]
-//!         field_d: *const u8,
-//!     }
-//! }
-//!
-//! let example_ptr = PExample::from(byte_array);
-//!
-//! // Access fields
-//! unsafe {
-//!     assert_eq!(example_ptr.field_b(), 69);
-//!     assert_eq!(example_ptr.field_a(), u32::MAX);
-//!     
-//!     // Array access
-//!     let field_d_1 = example_ptr.get_field_d(0).unwrap();
-//!     assert_eq!(*field_d_1, 10u8);
-//!     
-//!     // Reconstruct array
-//!     let array = core::slice::from_raw_parts(example_ptr.field_d(), 10);
-//!     assert_eq!(array, [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
-//!     
-//!     // Reinterpreted pointer
-//!     assert_eq!(*(example_ptr.field_c().as_ref().unwrap()), 40u8);
-//! }
-//! ```
-//!
 //! ## Attributes
 //!
 //! ### `offset`
@@ -148,8 +92,9 @@ macro_rules! dbg_print {
 ///   let byte_array: &[u8] = &[
 ///     69, // `field_b` (offset 0)
 ///     255, 255, 255, 255, // `field_a` (offset 1)
-///     10, 20, 30, 40, 50, 60, 70, 80, 90, 100, // `field_d` (offset 5)
+///     5, 0, 10, 0, 15, 0, 20, 0, 25, 0, // `field_d` (offset 5)
 ///     40,  // `field_c` (offset 0xF)
+///     1, 2, 3, 4 // Field `field_e` (offset 0x10)
 /// ];
 ///
 /// // Define a pointer struct using the macro.
@@ -163,10 +108,13 @@ macro_rules! dbg_print {
 ///         // Reinterprets the pointer from base + 0xF (via transmute) as a *const u8
 ///         // Use this feature to return pointers to a value rather than the value itself.
 ///         field_c: *const u8,
-///         #[offset(0x5, array(10))]
+///         #[offset(0x5, array(5, size_t = 2))]
 ///         // Defines the field as an array of pointers, allowing for indexing into the array.
 ///         // This is useful for returning arrays of pointers.
-///         field_d: *const u8,
+///         field_d: *const u16,
+///         // This is an array of 4 u8s, but the size of each element is determined by the size_fn attribute.
+///         #[offset(0x10, array(4, size_fn = "core::mem::size_of::<u8>()"))]
+///         field_e: *const u8,
 ///     }
 /// }
 ///
@@ -175,10 +123,14 @@ macro_rules! dbg_print {
 /// assert_eq!(unsafe { example_ptr.field_a() }, u32::MAX);
 ///
 /// let field_d_1 = unsafe { example_ptr.get_field_d(0).unwrap() };
-/// assert_eq!(unsafe { *field_d_1 }, 10u8);
-/// let reconstruct_array = unsafe { core::slice::from_raw_parts(example_ptr.field_d(), 10) };
-/// assert_eq!(reconstruct_array, [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
+/// let field_d_2 = unsafe { example_ptr.get_field_d(1).unwrap() };
+/// assert_eq!(unsafe { *field_d_1 }, 5u16);
+/// assert_eq!(unsafe { *field_d_2 }, 10u16);
+/// let reconstruct_array = unsafe { core::slice::from_raw_parts(example_ptr.field_d(), 5) };
+/// assert_eq!(reconstruct_array, [5, 10, 15, 20, 25]);
 /// assert_eq!(unsafe { *(example_ptr.field_c().as_ref().unwrap()) }, 40u8);
+/// assert_eq!(unsafe { *example_ptr.get_field_e(0).unwrap() }, 1u8);
+/// assert_eq!(unsafe { *example_ptr.get_field_e(1).unwrap() }, 2u8);
 ///
 ///
 /// ```

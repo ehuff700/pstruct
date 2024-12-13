@@ -1,7 +1,9 @@
 use attribute_derive::FromAttr;
 use proc_macro::TokenStream;
-use quote::{format_ident, quote};
-use syn::{parse_quote, Attribute, Fields, FieldsNamed, Ident, ItemStruct, Type, Visibility};
+use quote::{format_ident, quote, ToTokens};
+use syn::{
+    parse_quote, Attribute, Fields, FieldsNamed, Ident, ItemStruct, LitStr, Type, Visibility,
+};
 
 pub struct NamedStruct {
     pub attrs: Vec<Attribute>,
@@ -145,6 +147,36 @@ impl NamedStruct {
         expanded.into()
     }
 }
+
+#[derive(Debug, FromAttr, Clone)]
+#[attribute(ident = array)]
+pub struct ArrayAttr {
+    #[from_attr(positional)]
+    pub size_of_array: usize,
+    #[from_attr(optional, conflicts = [size_fn])]
+    pub size_t: Option<usize>,
+    #[from_attr(optional, conflicts = [size_t])]
+    pub size_fn: Option<LitStr>,
+}
+
+impl ArrayAttr {
+    pub fn member_size<T>(&self, span: T) -> syn::Result<TokenStream>
+    where
+        T: quote::ToTokens,
+    {
+        if let Some(size_fn) = self.size_t {
+            return Ok(quote! { #size_fn }.into());
+        }
+        if let Some(size_fn) = &self.size_fn {
+            let fn_path: syn::Expr = size_fn.parse()?;
+            return Ok(fn_path.into_token_stream().into());
+        }
+        Err(syn::Error::new_spanned(
+            span,
+            "No member size specified for array",
+        ))
+    }
+}
 #[derive(Debug, FromAttr)]
 #[attribute(ident = offset)]
 #[attribute(error(
@@ -155,7 +187,7 @@ pub struct OffsetAttr {
     #[from_attr(positional)]
     pub offset: usize,
     #[from_attr(optional, conflicts = [reinterpret])]
-    pub array: Option<usize>,
+    pub array: Option<ArrayAttr>,
     #[from_attr(optional, conflicts = [array])]
     pub reinterpret: bool,
 }
@@ -173,7 +205,7 @@ impl OffsetAttr {
     where
         T: quote::ToTokens,
     {
-        if self.array.is_some_and(|s| s == 0) {
+        if self.array.as_ref().is_some_and(|s| s.size_of_array == 0) {
             return Err(syn::Error::new_spanned(span, "Array size cannot be 0"));
         }
         Ok(())
@@ -182,25 +214,32 @@ impl OffsetAttr {
     /// Converts an OffsetAttr with a given field name/type into a TokenStream of methods
     pub fn to_token_stream(&self, field_name: &Ident, field_type: &Type) -> TokenStream {
         let offset = self.offset;
-        let read_expr = if self.reinterpret || self.array.is_some_and(|s| s != 0) {
-            quote! {
-                // let ptr_with_addr: *mut u8 = core::ptr::without_provenance_mut(self.0 + #offset_lit as usize);
-                // Base usize + Offset usize = pointer to bytes
-                let ptr_with_addr: *mut u8 = (self.0 + #offset as usize) as *mut u8;
-                core::mem::transmute(ptr_with_addr)
-            }
-        } else {
-            quote! {
-                //let ptr_with_addr: *mut u8 = core::ptr::without_provenance_mut(self.0 + #offset_lit as usize);
-                let ptr_with_addr: *mut u8 = (self.0 + #offset as usize) as *mut u8;
-                core::ptr::read_unaligned(ptr_with_addr as *const #field_type)
-            }
-        };
+        let read_expr =
+            if self.reinterpret || self.array.as_ref().is_some_and(|s| s.size_of_array != 0) {
+                quote! {
+                    // let ptr_with_addr: *mut u8 = core::ptr::without_provenance_mut(self.0 + #offset_lit as usize);
+                    // Base usize + Offset usize = pointer to bytes
+                    let ptr_with_addr: *mut u8 = (self.0 + #offset as usize) as *mut u8;
+                    core::mem::transmute(ptr_with_addr)
+                }
+            } else {
+                quote! {
+                    //let ptr_with_addr: *mut u8 = core::ptr::without_provenance_mut(self.0 + #offset_lit as usize);
+                    let ptr_with_addr: *mut u8 = (self.0 + #offset as usize) as *mut u8;
+                    core::ptr::read_unaligned(ptr_with_addr as *const #field_type)
+                }
+            };
 
         // Generate the array getter method if the field is an array
         let array_method = if self.is_array() {
             // SAFETY: This is safe because we check if the array size is not 0 in the is_valid method
-            let array_size = unsafe { self.array.unwrap_unchecked() };
+            let array_attr = unsafe { self.array.as_ref().unwrap_unchecked() };
+            let array_size = array_attr.size_of_array;
+            let size: proc_macro2::TokenStream = match array_attr.member_size(field_name) {
+                Ok(size) => size.into(),
+                Err(e) => return e.into_compile_error().into(),
+            };
+
             let getter_name = format_ident!("get_{}", field_name.to_string().to_lowercase());
             Some(quote! {
                 /// Retrieves a pointer to an element in the array, given the index.
@@ -211,7 +250,7 @@ impl OffsetAttr {
                         return None;
                     }
                     let base_array_ptr = self.#field_name().addr();
-                    let final_addr = base_array_ptr + (index * #array_size as usize);
+                    let final_addr = base_array_ptr + (index * #size);
                     let final_ptr = final_addr as *mut u8;
                     Some(core::mem::transmute(final_ptr))
                 }

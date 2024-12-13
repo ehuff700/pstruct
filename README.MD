@@ -15,14 +15,6 @@ A big inspiration for need for this crate was minimizing stack space for functio
 - Pointer reinterpretation capabilities
 - Safe and ergonomic field access
 
-## Usage
-
-Add this to your `Cargo.toml`:
-
-```toml
-[dependencies]
-pstruct = "0.1.0"
-```
 
 ## Example
 
@@ -46,7 +38,7 @@ p_struct! {
         field_b: u8,
         #[offset(0xF, reinterpret)]
         field_c: *const u8,
-        #[offset(0x5, array(10))]
+        #[offset(0x5, array(10, size_fn = "core::mem::size_of::<u8>()"))]
         field_d: *const u8,
     }
 }
@@ -79,7 +71,34 @@ The main attribute for specifying field offsets and behavior:
 
 - Basic usage: `#[offset(0x1)]` - Specifies the offset from base address
 - Reinterpret: `#[offset(0x1, reinterpret)]` - Reinterprets the pointer at the given offset as another pointer type.
-- Array: `#[offset(0x1, array(size))]` - Defines an array of pointers and generates a getter method for indexing into the array.
+- Array with member size determined by function: `#[offset(0x1, array(size, size_fn = "get_size"))]` - Defines an array where size is determined by the specified function
+- Array with member size determined by value: `#[offset(0x1, array(size, size_t = 5))]` - Defines an array where size is read from another field in the struct
+
+### `array`
+
+The array attribute has two key components:
+1. The array size (number of elements)
+2. The member size (size of each element)
+
+#### Syntax
+```rust
+#[offset(0x1, array(size, ...))]
+```
+
+- The first parameter `size` is positional and defines the number of elements in the array (e.g., `10`)
+- The member size can be specified in one of three ways:
+
+1. Fixed size using `size_t`:
+   ```rust
+   #[offset(0x10, array(20, size_t = 1))]
+   field: *const u8   // Member size will be 1 byte. This will be interpreted as a 20 element array of u8s.
+   ```
+
+3. Dynamic size using `size_fn`:
+   ```rust
+   #[offset(0x10, array(20, size_fn = "core::mem::size_of::<u32>()"))]
+   field: *const u32 // Member size will be determined by core::mem::size_of::<u32>()
+   ```
 
 ## Safety
 
